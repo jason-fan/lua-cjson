@@ -86,6 +86,7 @@ typedef enum {
     T_ARR_BEGIN,
     T_ARR_END,
     T_STRING,
+    T_INTEGER,
     T_NUMBER,
     T_BOOLEAN,
     T_NULL,
@@ -103,6 +104,7 @@ static const char *json_token_type_name[] = {
     "T_ARR_BEGIN",
     "T_ARR_END",
     "T_STRING",
+    "T_INTEGER",
     "T_NUMBER",
     "T_BOOLEAN",
     "T_NULL",
@@ -149,6 +151,7 @@ typedef struct {
     union {
         const char *string;
         double number;
+        long long integer;
         int boolean;
     } value;
     int string_len;
@@ -490,6 +493,20 @@ static void json_append_string(lua_State *l, strbuf_t *json, int lindex)
     strbuf_append_char_unsafe(json, '\"');
 }
 
+
+static void json_append_number2(lua_State *l, strbuf_t *json, int lindex)
+{
+    const char *str;
+    size_t len;
+    size_t i;
+
+    str = lua_tolstring(l, lindex, &len);
+    strbuf_ensure_empty_length(json, len);
+    for (i = 0; i < len; i++) {
+        strbuf_append_char_unsafe(json, str[i]);
+    }
+}
+
 /* Find the size of the array on the top of the Lua stack
  * -1   object (not a pure array)
  * >=0  elements in array
@@ -679,7 +696,8 @@ static void json_append_data(lua_State *l, json_config_t *cfg,
         json_append_string(l, json, -1);
         break;
     case LUA_TNUMBER:
-        json_append_number(l, cfg, json, -1);
+//        json_append_number(l, cfg, json, -1);
+          json_append_number2(l, json, -1);  // change by fanzhiyong
         break;
     case LUA_TBOOLEAN:
         if (lua_toboolean(l, -1))
@@ -1008,14 +1026,40 @@ static int json_is_invalid_number(json_parse_t *json)
 static void json_next_number_token(json_parse_t *json, json_token_t *token)
 {
     char *endptr;
-
-    token->type = T_NUMBER;
-    token->value.number = fpconv_strtod(json->ptr, &endptr);
-    if (json->ptr == endptr)
-        json_set_token_error(token, json, "invalid number");
-    else
-        json->ptr = endptr;     /* Skip the processed number */
-
+    char *pc = (char*)json->ptr;
+    int is_integer = 1;
+    int is_first = 1;
+    while (*pc)
+    {
+        char ch = *pc++;
+        if (is_first)
+        {
+            is_first = 0;
+            if (ch == '-' || ch == '+')
+                continue;
+        }
+        if ('.' == ch){
+            is_integer = 0;
+        }else{
+            if ('0' <= ch && ch <= '9'){
+                continue;
+            }
+        }
+        break;
+    }
+    
+    if (is_integer)
+    {
+        token->type = T_INTEGER;
+        token->value.integer = strtoll(json->ptr, &endptr, 10);
+    }else{
+        token->type = T_NUMBER;
+        token->value.number = fpconv_strtod(json->ptr, &endptr);
+    }
+        if (json->ptr == endptr)
+            json_set_token_error(token, json, "invalid number");
+        else
+            json->ptr = endptr;     /* Skip the processed number */
     return;
 }
 
@@ -1239,6 +1283,9 @@ static void json_process_value(lua_State *l, json_parse_t *json,
     switch (token->type) {
     case T_STRING:
         lua_pushlstring(l, token->value.string, token->string_len);
+        break;;
+    case T_INTEGER:
+        lua_pushinteger(l, token->value.integer);
         break;;
     case T_NUMBER:
         lua_pushnumber(l, token->value.number);
